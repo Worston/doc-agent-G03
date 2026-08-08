@@ -22,6 +22,47 @@ eda:
   exemplar_two_column: [350]
   exemplar_single_column: [201, 301]
 
+# Held-out slice (grading_kit/heldout_pages/ + labels.jsonl). A1 committed to 40 pages that
+# OCR is NEVER trained or tuned on; they are the oracle for the A2 OCR score. The selection is
+# deterministic from these parameters plus config.yaml's `seed`, so it can be re-derived and audited.
+heldout:
+  n_pages: 40
+  draw_from: "test"      # A1: split unit = SECTION, and OCR is never trained or tuned on these
+  stratify_by: "layout_type"
+  # The two_column quota mirrors the MEASURED CORPUS share (166/491 = 33.8% -> 14 of 40), not the
+  # test split's own 38%, so the headline character-F1 generalises to the corpus rather than to
+  # whichever sections happened to land in test. Per-layout numbers are reported separately
+  # (A1 Section 4), so nothing is lost by making the pooled number representative.
+  layout_share_source: "corpus"
+  # Within each stratum the test pages are cut into n contiguous blocks and one is drawn per block,
+  # so the slice spreads over all test sections instead of clumping in the largest one.
+  spread: "one page per contiguous block within each layout stratum"
+  # NOTE: no minimum page gap is enforced. Adjacent pages inside the slice are harmless because
+  # both sides are held out; leakage is prevented by assigning WHOLE SECTIONS to one split.
+  content_only: true     # reuses eda.content_min_words; sparse/blank pages cannot be an OCR oracle
+  # Contents and index pages clear the word floor but are lists of page numbers, not prose, so a
+  # grader cannot author a real question from them. Candidates were found by scanning for pages
+  # whose lines mostly end in a page reference, plus an explicit CONTENTS/INDEX heading check;
+  # every candidate was then reviewed by eye. Frozen as a list so selection stays deterministic
+  # and a grader can audit the judgement. pp. 7/93/189 = contents, 604-614 = the back index.
+  # p112 was a candidate but is a genuine two-column budget TABLE, so it is deliberately kept.
+  exclude_pages: [7, 93, 189, 604, 605, 606, 607, 608, 609, 610, 611, 612, 613, 614]
+
+# Section-level split, exactly as committed in A1: "Split unit = SECTION (the book's own
+# Class/Part divisions), not page. Approximately 70% train / 15% validation / 15% test by
+# section, assigned whole — every page of a section goes to exactly one split."
+# Sections come from the running heads: `CLASS n` inside the recipe part (pp. 219-423) and the
+# Roman-numeral `Section N` elsewhere, with SUPPLEMENT for the wartime front supplement. Heads
+# are forward-filled because verso and recto carry DIFFERENT heads (verso repeats the section,
+# recto names the class), and the class digits arrive space-split from OCR ("CLASS 1 6" = 16).
+# Realised on 491 content pages: train 67.8% (24 sections) / val 16.1% (6) / test 16.1% (8).
+splits:
+  unit: "section"
+  # Everything not listed here is train. Whole sections only — never a page-level assignment.
+  test_sections: ["CLASS 01", "CLASS 07", "CLASS 12", "CLASS 14", "CLASS 19", "CLASS 20",
+                  "Section II", "Section VII"]
+  val_sections:  ["CLASS 05", "CLASS 28", "CLASS 30", "Section VI", "Section IX", "Section XI"]
+
 # Numbers as printed in the submitted A1 form. Kept verbatim for consistency (the A2 rubric
 # awards Section 1 marks for matching A1); the notebook reports what it actually measures and
 # flags any delta rather than editing these.
