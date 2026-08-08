@@ -4,23 +4,23 @@
 # ONLY this file; it points to the rest. Build/run scripts and the eval
 # tasks are NAMED here, not copied, so they never go stale.
 
-project_id: ""              # your team id
+project_id: "03"              # your team id
 
 axes:
-  domain: ""                # your corpus subject / real user (see Roster; one per team)
-  data_speciality: ""       # ONE hard property of your corpus you are handed (see Data-Speciality Catalog)
+  domain: "Historical Cookbook and Culinary Heritage. The user is a food historian / heritage-cookery researcher (e.g. at a museum, culinary archive, or a heritage restaurant kitchen) who needs to find and verify how a specific domestic technique, ingredient, or wartime food rule was actually documented in early-20th-century household manuals."                # your corpus subject / real user (see Roster; one per team)
+  data_speciality: "Multi-column reading-order, with dirty/degraded scan as a secondary condition. Our corpus is English, so we take a data condition rather than a script: roughly a third of the content pages are set in two columns with a narrow gutter, and the scan itself carries heavy OCR damage."       # ONE hard property of your corpus you are handed (see Data-Speciality Catalog)
                             #   e.g. bangla | arabic | code-switching | degraded-scans | multi-column |
                             #        handwritten | old-orthography | math-notation | dirty-ocr | ...
                             #   (English is not a speciality; if your corpus is English, pick a data condition.)
-  primary_nfr: ""           # ONE quality you optimise ABOVE baseline (see NFR sheet). Faithful &
+  primary_nfr: "Calibrated"           # ONE quality you optimise ABOVE baseline (see NFR sheet). Faithful &
                             #   accurate are REQUIRED of everyone (baseline), so they are NOT choices.
-  nfr_target: ""            # the concrete target you commit to for that NFR, e.g. "p95 latency <= 300ms",
+  nfr_target: "Expected Calibration Error (ECE) ≤ 0.05 on our task suite, measured with 10 equal-mass confidence bins, with abstention triggered below the calibrated confidence threshold."            # the concrete target you commit to for that NFR, e.g. "p95 latency <= 300ms",
                             #   "peak RAM <= 2GB", "ECE <= 0.05", "PII recall >= 0.98"
 
 corpus:
   path: data/raw/                   # where the scanned page-images live
-  pages: 0                          # total pages  (floor: >= 300)
-  words: 0                          # total words  (floor: >= 60000)
+  pages: 624                          # total pages  (floor: >= 300)
+  words: 318,259                           # total words  (floor: >= 60000)
   provenance: data/provenance.md    # source + licence + counts
 
 heldout:
