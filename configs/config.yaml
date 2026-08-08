@@ -2,6 +2,7 @@
 seed: 42
 device: cuda
 
+ingest:    {raw_dir: "data/raw", doc_id: "hkb", page_glob: "*.png"}   # Stage 1 — page images built by scripts/get_data.sh
 enhance:   {enabled: true,  model: "unet_small", type: "diffusion"}   # or "vae" / "none"
 layout:    {model: "detectron2:layout", score_thr: 0.5}
 ocr:       {model: "microsoft/trocr-base-printed", finetune: true}    # BASELINE = pretrained OCR

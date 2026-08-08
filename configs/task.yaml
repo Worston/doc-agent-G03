@@ -1,7 +1,13 @@
-# Stage 0 — problem statement (one per group). Set by assignment.
-group_id: "G00"
-domain: "almanacs/panjika"
-data_speciality: "degraded-scans"   # ONE hard corpus property (English is not one)
-primary_nfr: "reproducible"
-nfr_target: "p95 latency <= 300ms"   # your concrete committed target
-corpus: {min_pages: 300, min_words: 60000, source_url: "", license: ""}
+# Stage 0 — problem statement (one per group). Set in A1, carried into A2 unchanged.
+project_name: "CulinaryHeritageQA"
+group_id: "03"
+domain: "historical-cookbook-culinary-heritage"
+data_speciality: "multi-column"      # primary; secondary condition: degraded/dirty scans
+primary_nfr: "calibrated"
+nfr_target: "ECE <= 0.05 on the task suite (10 equal-mass bins)"   # our committed target
+success_metric: "groundedness >= 0.90"   # A1 headline answer-quality metric — DO NOT CHANGE
+corpus:
+  min_pages: 300
+  min_words: 60000
+  source_url: "https://archive.org/details/homekeepingbook00brow"
+  license: "public-domain"
