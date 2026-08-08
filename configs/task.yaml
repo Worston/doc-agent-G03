@@ -11,3 +11,26 @@ corpus:
   min_words: 60000
   source_url: "https://archive.org/details/homekeepingbook00brow"
   license: "public-domain"
+
+# EDA parameters. A1 committed that these live here, NOT in notebook cells, so that
+# notebooks/eda.ipynb re-derives every corpus number from a single declared source.
+eda:
+  source_pdf: "data/interim/homekeepingbook00brow.pdf"   # placed by scripts/get_data.sh
+  content_min_words: 80          # below this a page is sparse front-matter / plate / blank memo
+  two_column_max_cross_frac: 0.012   # <1.2% of word boxes straddling the centre-line => two-column
+  # Pages A1 names as layout exemplars; the notebook re-checks them rather than trusting A1.
+  exemplar_two_column: [350]
+  exemplar_single_column: [201, 301]
+
+# Numbers as printed in the submitted A1 form. Kept verbatim for consistency (the A2 rubric
+# awards Section 1 marks for matching A1); the notebook reports what it actually measures and
+# flags any delta rather than editing these.
+a1_reported:
+  total_pages: 624
+  content_pages: 506
+  sparse_pages: 118
+  total_words: 318259
+  median_content_words: 626
+  max_content_words: 1064
+  two_column_pages: 167
+  two_column_pct: 33.0
