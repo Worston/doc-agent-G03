@@ -47,6 +47,13 @@ heldout:
   # and a grader can audit the judgement. pp. 7/93/189 = contents, 604-614 = the back index.
   # p112 was a candidate but is a genuine two-column budget TABLE, so it is deliberately kept.
   exclude_pages: [7, 93, 189, 604, 605, 606, 607, 608, 609, 610, 611, 612, 613, 614]
+  # Section OPENER pages whose title is drawn INSIDE the decorative masthead and so has no text
+  # layer at all — no regex over the PDF text can recover them. Read off the 300 DPI image by
+  # eye and pinned here so the derivation stays deterministic and auditable.
+  # p139 prints "THE DINING ROOM / AND THE REFRIGERATOR / SECTION III" as artwork; without this
+  # it forward-fills to Section II and a Section III page leaks into the test pool.
+  eye_verified_sections:
+    139: "Section III"
 
 # Section-level split, exactly as committed in A1: "Split unit = SECTION (the book's own
 # Class/Part divisions), not page. Approximately 70% train / 15% validation / 15% test by
