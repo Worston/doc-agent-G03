@@ -3,6 +3,17 @@ seed: 42
 device: cuda
 
 ingest:    {raw_dir: "data/raw", doc_id: "hkb", page_glob: "*.png"}   # Stage 1 — page images built by scripts/get_data.sh
+# Stage 1 — classical cleanup (speciality E1, degraded scans). Writes data/interim/<page_id>.png.
+preprocess:
+  enabled: true
+  out_dir: "data/interim"
+  # Values below are measured on the 40-page verified oracle (Tesseract CER): raw .0914,
+  # deskew+median .0797, no median .0885, +sauvola .0911, +otsu .0799. See preprocess.py.
+  deskew:    {max_angle: 3.0, coarse_step: 0.5, fine_step: 0.05, min_angle: 0.05}  # held-out pages skew <=0.55 deg but end-matter reaches ~2 deg, so keep headroom
+  denoise:   {median_ksize: 3}                         # worth 0.009 CER
+  binarize:  {method: "none", window: 41, k: 0.2}      # off: Tesseract binarizes internally and TrOCR wants continuous tone; sauvola / otsu / adaptive available
+  despeckle: {min_area: 12}                            # only applies when binarizing; a 10 pt full stop is ~70 px at 300 DPI, so punctuation survives
+  workers: 0                                           # 0 = cpu_count - 1
 enhance:   {enabled: true,  model: "unet_small", type: "diffusion"}   # or "vae" / "none"
 layout:    {model: "detectron2:layout", score_thr: 0.5}
 ocr:       {model: "microsoft/trocr-base-printed", finetune: true}    # BASELINE = pretrained OCR
