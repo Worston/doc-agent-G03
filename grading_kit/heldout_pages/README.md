@@ -181,9 +181,13 @@ Re-derive and audit at any time:
 Images: **done** (40/40, byte-identical to `data/raw/`).
 Transcriptions in `../labels.jsonl`: **done** (40/40, 26,397 words, 0 `[?]` markers).
 
-**Provenance — read before quoting any number.** These transcriptions were produced by a
-vision-language model reading the 300 DPI page images at high zoom, and are recorded as such in
-each record's `transcription_source` field. They are deliberately **not** derived from the
-Internet Archive PDF text layer, which is ABBYY OCR — scoring OCR against another OCR engine's
-output would make the metric circular. They are **not yet human-verified**. Until a human has
-checked them, no score measured on this slice may be quoted as ground-truth OCR accuracy.
+**Provenance — read before quoting any number.** These transcriptions were drafted by a
+vision-language model reading the 300 DPI page images at high zoom, then **checked page by page
+against the images by a member of the team**, who corrected them in two passes (commits
+`bb437cf`, `d961f71`). Both stages are recorded in each record's `transcription_source` field.
+They are deliberately **not** derived from the Internet Archive PDF text layer, which is ABBYY
+OCR — scoring OCR against another OCR engine's output would make the metric circular. With human
+verification complete, this slice is the reference used for the Section 5 OCR accuracy figure.
+
+Printers' errors and archaic spellings are preserved verbatim, so an OCR stage that silently
+"corrects" the page scores *worse*, as intended.
