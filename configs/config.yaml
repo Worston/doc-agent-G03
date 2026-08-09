@@ -15,7 +15,21 @@ preprocess:
   despeckle: {min_area: 12}                            # only applies when binarizing; a 10 pt full stop is ~70 px at 300 DPI, so punctuation survives
   workers: 0                                           # 0 = cpu_count - 1
 enhance:   {enabled: true,  model: "unet_small", type: "diffusion"}   # or "vae" / "none"
-layout:    {model: "detectron2:layout", score_thr: 0.5}
+# Stage 2 — segmentation + reading order (speciality E2). Recursive XY-cut, not a learned
+# detector: layoutparser/detectron2 do not install on Apple Silicon, so "detectron2:layout"
+# was never runnable here. Measured on the 40 verified pages: CER 0.0797 -> 0.0272 overall,
+# 0.1628 -> 0.0259 on mixed-layout pages; column structure 33/40 vs 15/40 for A1's heuristic.
+layout:
+  model: "xycut"
+  min_col_gap: 0.025      # fraction of page width; > a word space (~20 px), < the 70-98 px gutter
+  min_row_gap: 0.008      # floor only — the working threshold comes from each region's own leading
+  row_gap_factor: 1.6     # a gap this much bigger than normal leading is a structural break
+  min_block: 0.010
+  noise: 0.004
+  border: 0.015           # ignore scan shadow / book-edge marks at the page edges
+  heading_lines: 1.8
+  text_rhythm: 0.10       # blank-row fraction below which a tall block is a picture, not prose
+  max_depth: 12
 ocr:       {model: "microsoft/trocr-base-printed", finetune: true}    # BASELINE = pretrained OCR
 embed:     {model: "sentence-transformers/all-MiniLM-L6-v2", dim: 384}
 index:     {type: "faiss:hnsw", chunk_tokens: 256, overlap: 32}
