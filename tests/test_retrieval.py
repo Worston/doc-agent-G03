@@ -6,10 +6,12 @@ overlap and always advance, that a window straddling a page break remembers both
 and that the text is never round-tripped through the tokenizer.
 """
 
+import numpy as np
 import pytest
 
 from doc_agent.contracts import Chunk
 from doc_agent.index import chunk as ch
+from doc_agent.index import embed as em
 
 CFG = {"index": {"chunk_tokens": 12, "overlap": 4}, "embed": {"model": "stub"}}
 BUDGET = CFG["index"]["chunk_tokens"] - ch._SPECIALS  # 10 words when 1 piece == 1 word
@@ -162,3 +164,99 @@ def test_the_budget_is_counted_in_wordpieces_not_words(monkeypatch):
     text = " ".join(["Home-Keeping curaçao sauceboat"] * 40)
     for c in ch.split([_region(text)], {"index": {"chunk_tokens": 64, "overlap": 8}}):
         assert len(enc(c.text)["input_ids"]) <= 64
+
+
+# ===================================================================================
+# embedding
+# ===================================================================================
+
+ECFG = {"embed": {"model": "stub", "dim": 4}}
+
+
+def _fake_encoder(monkeypatch, width: int = 4):
+    """An encoder that returns a recognisable row per text, so alignment is checkable."""
+
+    class _Stub:
+        def encode(self, texts, **kw):
+            return np.array([[float(len(t))] + [0.0] * (width - 1) for t in texts])
+
+    monkeypatch.setattr(em, "_model", lambda name, device: _Stub())
+
+
+def test_encoding_returns_one_row_per_chunk_in_order(monkeypatch):
+    _fake_encoder(monkeypatch)
+    chunks = [
+        Chunk(id=f"hkb#c{i}", doc_id="hkb", text="x" * n, page_ids=["hkb_p0001"])
+        for i, n in enumerate((3, 1, 2))
+    ]
+    vecs = em.encode(chunks, ECFG)
+    assert vecs.shape == (3, 4)
+    assert list(vecs[:, 0]) == [3.0, 1.0, 2.0], "row i must belong to chunk i"
+
+
+def test_vectors_are_float32_for_faiss(monkeypatch):
+    """faiss silently copies anything else; float64 doubles the index for no gain."""
+    _fake_encoder(monkeypatch)
+    assert em.encode_texts(["a"], ECFG).dtype == np.float32
+
+
+def test_no_chunks_still_yields_the_index_width():
+    """faiss needs the dimension even with nothing to add, so (0, dim), not (0,)."""
+    assert em.encode_texts([], ECFG).shape == (0, 4)
+
+
+def test_a_dim_mismatch_fails_loudly(monkeypatch):
+    """Otherwise the wrong-width index is written and only fails at search time."""
+    _fake_encoder(monkeypatch, width=8)
+    with pytest.raises(ValueError, match="embed.dim is 4"):
+        em.encode_texts(["a"], ECFG)
+
+
+def test_unknown_embed_keys_do_not_shadow_defaults():
+    merged = em._merge(em._DEFAULTS, {"dim": 768, "type": "faiss:hnsw"})
+    assert "type" not in merged and merged["dim"] == 768
+    assert merged["batch"] == em._DEFAULTS["batch"]
+
+
+def test_cuda_is_downgraded_when_the_machine_has_none():
+    """config.yaml ships device: cuda; this Mac has none and must not crash on it."""
+    torch = pytest.importorskip("torch")
+    want = "cuda" if torch.cuda.is_available() else "cpu"
+    assert em._device("cuda") == want
+
+
+# --- the real encoder --------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def real_cfg():
+    cfg = {"embed": {"model": "sentence-transformers/all-MiniLM-L6-v2", "dim": 384}}
+    try:
+        em.encode_texts(["warm the cache"], cfg)
+    except Exception as exc:  # offline CI has no hub access
+        pytest.skip(f"embedding model unavailable: {exc}")
+    return cfg
+
+
+def test_rows_are_unit_vectors_so_inner_product_is_cosine(real_cfg):
+    """retrieve.weak_threshold is a constant in [-1, 1]; unnormalised scores break it."""
+    vecs = em.encode_texts(["boil the linen", "a quite different sentence"], real_cfg)
+    assert np.allclose(np.linalg.norm(vecs, axis=1), 1.0, atol=1e-5)
+
+
+def test_a_query_is_closer_to_its_answer_than_to_an_unrelated_chunk(real_cfg):
+    passages = [
+        "To remove ink stains from linen, wet the spot with lemon juice and salt.",
+        "The dining-room lights were all in operation, each consuming five amperes.",
+    ]
+    vecs = em.encode_texts(passages, real_cfg)
+    query = em.encode_texts(["how do I get ink out of a tablecloth?"], real_cfg)
+    ink, lamps = (query @ vecs.T)[0]
+    assert ink > real_cfg.get("retrieve", {}).get("weak_threshold", 0.35) > lamps
+
+
+def test_queries_and_passages_share_one_encoder(real_cfg):
+    """A bi-encoder is only comparable if both sides took the identical path."""
+    text = "Take a pound of loaf sugar and boil it until it ropes."
+    as_chunk = em.encode([Chunk(id="c", doc_id="hkb", text=text, page_ids=["p"])], real_cfg)
+    assert np.array_equal(as_chunk[0], em.encode_texts([text], real_cfg)[0])
