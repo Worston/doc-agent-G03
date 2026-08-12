@@ -30,7 +30,33 @@ layout:
   heading_lines: 1.8
   text_rhythm: 0.10       # blank-row fraction below which a tall block is a picture, not prose
   max_depth: 12
-ocr:       {model: "microsoft/trocr-base-printed", finetune: true}    # BASELINE = pretrained OCR
+# Stage 3 — OCR. "tesseract" | any HuggingFace id | a local fine-tuned dir.
+ocr:
+  model: "tesseract"
+  finetune: true          # use ocr_train.out_dir when it is on disk; ignored for tesseract
+  psm: 6                  # a layout region is a uniform block, so Tesseract must not re-segment
+  source_dir: "data/interim"   # bboxes from Stage 2 are in the Stage 1 frame, not data/raw
+  line_gap: 0.3           # 0.5 fused paragraphs into single "lines" for the line recogniser
+# Fine-tune data + hyperparameters. Labels are the Internet Archive ABBYY text layer, which
+# is a NOISY TEACHER (~0.048 CER per line after re-ordering), not ground truth: this is
+# distillation. The 40 verified pages and every TEST section are excluded — see datamodule.
+ocr_train:
+  # "small" (62M), not "base" (334M), for a measured reason: no usable GPU here. One base
+  # step (batch 8) is 6-12 s on CPU and ~200 s on MPS even after the graph shapes stop
+  # changing, so 2 epochs would cost ~5 h / ~100 h. Small is 1.2 s/step -> ~20 min/epoch.
+  base_model: "microsoft/trocr-small-printed"
+  out_dir: "models/trocr-hkb"
+  epochs: 3
+  batch_size: 8
+  # 160-step probe, mean loss over the last 40: 5e-6 -> 5.76, 5e-5 -> 2.65, 2e-4 -> 4.47.
+  # 5e-6 is the rate for the 334M model; on 62M it barely moves and the recogniser drops
+  # most of the words in a line (page CER 0.63).
+  lr: 5.0e-5
+  warmup_steps: 200
+  weight_decay: 0.01
+  grad_clip: 1.0
+  max_target_length: 64   # a printed line of this book is ~60 characters
+  limit_val_batches: 50   # full val is 2k lines; 50 batches is enough to steer checkpointing
 embed:     {model: "sentence-transformers/all-MiniLM-L6-v2", dim: 384}
 index:     {type: "faiss:hnsw", chunk_tokens: 256, overlap: 32}
 retrieve:  {k: 10, k_step: 10, k_max: 40, weak_threshold: 0.35, rerank: true, reranker: "cross-encoder/ms-marco-MiniLM-L6-v2"}   # k_step/k_max/weak_threshold drive evidence-gated re-search
