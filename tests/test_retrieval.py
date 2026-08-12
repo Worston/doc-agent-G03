@@ -12,6 +12,7 @@ import pytest
 from doc_agent.contracts import Chunk
 from doc_agent.index import chunk as ch
 from doc_agent.index import embed as em
+from doc_agent.index import store as st
 
 CFG = {"index": {"chunk_tokens": 12, "overlap": 4}, "embed": {"model": "stub"}}
 BUDGET = CFG["index"]["chunk_tokens"] - ch._SPECIALS  # 10 words when 1 piece == 1 word
@@ -260,3 +261,132 @@ def test_queries_and_passages_share_one_encoder(real_cfg):
     text = "Take a pound of loaf sugar and boil it until it ropes."
     as_chunk = em.encode([Chunk(id="c", doc_id="hkb", text=text, page_ids=["p"])], real_cfg)
     assert np.array_equal(as_chunk[0], em.encode_texts([text], real_cfg)[0])
+
+
+# ===================================================================================
+# vector store
+#
+# The faiss backends are deliberately not exercised here: faiss and torch each ship a
+# libomp, and the second to initialise aborts the interpreter (OMP: Error #15), so a
+# faiss test would take the whole suite down with it. That incompatibility is the
+# reason index.type defaults to numpy:flat -- see the store module docstring.
+# ===================================================================================
+
+
+def _store_cfg(tmp_path, **over) -> dict:
+    return {
+        "embed": {"model": "stub-embedder"},
+        "index": {"type": "numpy:flat", "out_dir": str(tmp_path / "index"), **over},
+    }
+
+
+def _corpus(n: int = 4):
+    """n chunks on n orthogonal axes, so every query has exactly one right answer."""
+    chunks = [
+        Chunk(id=f"hkb#c{i:05d}", doc_id="hkb", text=f"passage {i}", page_ids=[f"hkb_p{i:04d}"])
+        for i in range(n)
+    ]
+    return chunks, np.eye(n, 384, dtype=np.float32)
+
+
+def test_build_then_load_round_trips_the_chunks(tmp_path):
+    cfg = _store_cfg(tmp_path)
+    chunks, vecs = _corpus()
+    st.build(chunks, vecs, cfg)
+    loaded = st.load(cfg)
+    assert [c.id for c in loaded.chunks] == [c.id for c in chunks]
+    assert [c.page_ids for c in loaded.chunks] == [c.page_ids for c in chunks]
+    assert np.array_equal(loaded.vectors, vecs)
+
+
+def test_the_sidecar_carries_the_text_because_a_hit_is_only_an_integer(tmp_path):
+    cfg = _store_cfg(tmp_path)
+    st.build(*_corpus(), cfg)
+    assert (tmp_path / "index" / "chunks.jsonl").exists()
+    assert st.load(cfg).chunks[2].text == "passage 2"
+
+
+def test_search_returns_the_chunk_that_owns_the_matching_row(tmp_path):
+    cfg = _store_cfg(tmp_path)
+    chunks, vecs = _corpus()
+    st.build(chunks, vecs, cfg)
+    (hits,) = st.load(cfg).search(vecs[2:3], k=2)
+    assert hits[0].id == "hkb#c00002"
+    assert hits[0].page_ids == ["hkb_p0002"]
+
+
+def test_scores_are_cosine_and_ranked_best_first(tmp_path):
+    cfg = _store_cfg(tmp_path)
+    chunks, vecs = _corpus()
+    st.build(chunks, vecs, cfg)
+    (hits,) = st.load(cfg).search(vecs[0:1], k=4)
+    assert hits[0].score == pytest.approx(1.0, abs=1e-6)
+    assert [h.score for h in hits] == sorted((h.score for h in hits), reverse=True)
+
+
+def test_several_queries_are_answered_independently(tmp_path):
+    cfg = _store_cfg(tmp_path)
+    chunks, vecs = _corpus()
+    st.build(chunks, vecs, cfg)
+    out = st.load(cfg).search(vecs[[3, 1]], k=1)
+    assert [hits[0].id for hits in out] == ["hkb#c00003", "hkb#c00001"]
+
+
+def test_scores_do_not_leak_from_one_query_into_the_next(tmp_path):
+    """Results must be copies; mutating the stored chunks would restate the last query."""
+    cfg = _store_cfg(tmp_path)
+    chunks, vecs = _corpus()
+    st.build(chunks, vecs, cfg)
+    store_ = st.load(cfg)
+    store_.search(vecs[0:1], k=4)
+    assert all(c.score == 0.0 for c in store_.chunks)
+
+
+def test_asking_for_more_neighbours_than_exist_is_not_an_error(tmp_path):
+    cfg = _store_cfg(tmp_path)
+    st.build(*_corpus(3), cfg)
+    (hits,) = st.load(cfg).search(np.eye(1, 384, dtype=np.float32), k=50)
+    assert len(hits) == 3
+
+
+# --- refusing to be silently wrong -------------------------------------------------
+
+
+def test_an_index_built_with_another_embedder_is_refused(tmp_path):
+    """Nothing in a vector says which encoder made it, so a stale index searches happily."""
+    cfg = _store_cfg(tmp_path)
+    st.build(*_corpus(), cfg)
+    cfg["embed"]["model"] = "some-other-model"
+    with pytest.raises(ValueError, match="rebuild"):
+        st.load(cfg)
+
+
+def test_loading_before_building_says_what_to_run(tmp_path):
+    with pytest.raises(FileNotFoundError, match="build_index"):
+        st.load(_store_cfg(tmp_path))
+
+
+def test_a_chunk_vector_count_mismatch_is_refused(tmp_path):
+    chunks, vecs = _corpus(4)
+    with pytest.raises(ValueError, match="misalign"):
+        st.build(chunks, vecs[:3], _store_cfg(tmp_path))
+
+
+def test_an_empty_index_is_refused(tmp_path):
+    """Zero chunks always means a broken stage upstream, never a valid knowledge base."""
+    with pytest.raises(ValueError, match="empty index"):
+        st.build([], np.zeros((0, 384), np.float32), _store_cfg(tmp_path))
+
+
+def test_an_unknown_index_type_is_refused_at_build_time(tmp_path):
+    with pytest.raises(ValueError, match="unknown index.type"):
+        st.build(*_corpus(), _store_cfg(tmp_path, type="annoy:tree"))
+
+
+def test_a_truncated_sidecar_is_refused(tmp_path):
+    cfg = _store_cfg(tmp_path)
+    st.build(*_corpus(4), cfg)
+    p = tmp_path / "index" / "chunks.jsonl"
+    p.write_text("\n".join(p.read_text().splitlines()[:2]) + "\n")
+    with pytest.raises(ValueError, match="rebuild"):
+        st.load(cfg)

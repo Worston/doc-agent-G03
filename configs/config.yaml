@@ -58,7 +58,13 @@ ocr_train:
   max_target_length: 64   # a printed line of this book is ~60 characters
   limit_val_batches: 50   # full val is 2k lines; 50 batches is enough to steer checkpointing
 embed:     {model: "sentence-transformers/all-MiniLM-L6-v2", dim: 384}
-index:     {type: "faiss:hnsw", chunk_tokens: 256, overlap: 32}
+# Stage 4. chunk_tokens is counted in WORDPIECES: this corpus runs 1.32 pieces per word, so a
+# 256-*word* window would be ~338 pieces and the encoder would truncate every chunk's tail.
+# type: "faiss:hnsw" and "faiss:flat" still work, but faiss and torch each ship their own
+# libomp and the second to load aborts the process (OMP: Error #15 -> SIGSEGV) unless
+# OMP_NUM_THREADS=1, which also single-threads training. It buys nothing at this size anyway:
+# 0.004 ms/query for numpy exact vs 0.009 flat / 0.012 hnsw, recall@10 = 1.000 for all three.
+index:     {type: "numpy:flat", out_dir: "data/index", chunk_tokens: 256, overlap: 32}
 retrieve:  {k: 10, k_step: 10, k_max: 40, weak_threshold: 0.35, rerank: true, reranker: "cross-encoder/ms-marco-MiniLM-L6-v2"}   # k_step/k_max/weak_threshold drive evidence-gated re-search
 agent:     {max_steps: 8, autonomy: "act-with-approval", budget_usd: 0.05}
 rl:        {algo: "ppo", train_policy: false}                         # bonus: set true

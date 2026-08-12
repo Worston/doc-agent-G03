@@ -1,5 +1,7 @@
 data/raw/
 data/interim/
+# vector index; rebuild with scripts/build_index.sh
+data/index/
 *.ckpt
 *.safetensors
 # fine-tuned OCR weights; rebuild with training/train.py
