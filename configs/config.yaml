@@ -14,7 +14,9 @@ preprocess:
   binarize:  {method: "none", window: 41, k: 0.2}      # off: Tesseract binarizes internally and TrOCR wants continuous tone; sauvola / otsu / adaptive available
   despeckle: {min_area: 12}                            # only applies when binarizing; a 10 pt full stop is ~70 px at 300 DPI, so punctuation survives
   workers: 0                                           # 0 = cpu_count - 1
-enhance:   {enabled: true,  model: "unet_small", type: "diffusion"}   # or "vae" / "none"
+# Off: the generative enhancer is the BONUS item and Enhancer.apply() is still a stub, so
+# leaving this true makes build_knowledge_base() die at Stage 1 with NotImplementedError.
+enhance:   {enabled: false, model: "unet_small", type: "diffusion"}   # or "vae" / "none"
 # Stage 2 — segmentation + reading order (speciality E2). Recursive XY-cut, not a learned
 # detector: layoutparser/detectron2 do not install on Apple Silicon, so "detectron2:layout"
 # was never runnable here. Measured on the 40 verified pages: CER 0.0797 -> 0.0272 overall,
