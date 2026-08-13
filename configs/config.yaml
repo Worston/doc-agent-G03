@@ -1,6 +1,6 @@
 # THE place you set models & parameters. Code reads only from here.
 seed: 42
-device: cuda
+device: cpu
 
 ingest:    {raw_dir: "data/raw", doc_id: "hkb", page_glob: "*.png"}   # Stage 1 — page images built by scripts/get_data.sh
 # Stage 1 — classical cleanup (speciality E1, degraded scans). Writes data/interim/<page_id>.png.
