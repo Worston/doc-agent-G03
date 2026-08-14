@@ -1,0 +1,457 @@
+Name           : Khalid Hasan Tuhin
+Student Number : 2105002
+Sections Led   : Section 4 — The Knowledge Base We Built
+Stages Owned   : Stage 4 (chunk / embed / index) + the index build script
+                 and the PII seam that blocked it
+Dates          : 12 August 2026, 02:53 - 04:32 (Asia/Dhaka)
+Assistant      : Claude (Anthropic), used through the Claude Code CLI, which
+                 reads and edits files in the repo and runs shell commands
+                 directly. Actions it took between messages are summarised in
+                 square brackets inside its replies.
+Note           : This is a condensed excerpt of the working session. My prompts
+                 are verbatim. The assistant's replies are shortened where they
+                 repeated themselves or dumped full file contents; every cut is
+                 marked [...]. Numbers, commit hashes and error text are
+                 unedited.
+
+
+────────────────────────────────────────────────────────────────────────────────
+[TURN 1] — scoping what Stage 4 actually is
+────────────────────────────────────────────────────────────────────────────────
+
+Me:
+what are you actually trying to do now? Its been quite a long andd you are not
+stopping
+
+
+AI:
+Fair question. Short version:
+
+**Goal:** step 4-5 of the plan you approved — fine-tune TrOCR on the ABBYY line
+labels, then benchmark it against Tesseract on your 40 verified pages.
+
+**Why it dragged on:** three real problems, each only visible by measuring:
+
+1. **MPS is unusable** for this — 200 s/step vs 6-12 s on CPU. Switched to CPU.
+2. **`lr: 5e-6` was ~10x too low** for the model size. Probe: 5e-6 -> loss 5.76,
+   5e-5 -> 2.65.
+3. **A genuine bug** — `VisionEncoderDecoderModel` shifts decoder inputs, then
+   scores them with `ForCausalLMLoss` which shifts *again*. So the model was
+   trained to predict the token *after next*, and at inference it skipped every
+   other word. Verified numerically: the model's `.loss` equals the
+   double-shifted CE exactly.
+
+That third one explains the bad results, and it's why the two earlier training
+runs were wasted.
+
+**The thing you should know:** Tesseract already wins decisively and is what
+`config.yaml` ships — **CER 0.0272** vs any TrOCR variant. On the *same* line
+crops, Tesseract gets 0.0068. The fine-tune isn't going to beat it; it exists to
+satisfy A2's "train a component" requirement and to fill the comparison table.
+
+So — your call:
+
+- **Let it finish** (~70 min) and I commit Stage 3 + training with real numbers,
+- **Kill it now** and I commit what's already measured, then move on to the
+  remaining A2 work: index/chunk.py, embed.py, store.py, build_index.sh.
+
+
+Me:
+no proceed
+
+[I chose to kill the retrain. The fine-tune had already lost by a factor of 25;
+another 70 minutes of CPU would not have changed which backend ships, and Stage 4
+was the part still unbuilt. This set the scope of everything below.]
+
+
+────────────────────────────────────────────────────────────────────────────────
+[TURN 2] — chunking: the measurement that decided the design
+────────────────────────────────────────────────────────────────────────────────
+
+Me:
+now move further
+
+
+AI:
+[Read src/doc_agent/index/chunk.py, the FIXED Chunk contract in contracts.py, and
+the index block of configs/config.yaml. Then, before writing anything, ran the
+MiniLM tokenizer over the OCR output of 8 held-out pages to price the config's
+"chunk_tokens: 256" in the units the encoder actually uses.]
+
+Measuring what "256 tokens" actually costs on this corpus — MiniLM truncates at
+256 wordpieces, so a word-count proxy would silently drop text.
+
+[...]
+
+Stage 4a (`index/chunk.py`) is done — 94 passed, 8 skipped.
+
+**What it does:** Stage 3's per-region chunks are concatenated per document in
+reading order, then cut into overlapping windows budgeted in **wordpieces** (not
+words) using the embedder's own tokenizer.
+
+Two measurements drove the design:
+
+- **1.32 MiniLM pieces per word** on this corpus — a 256-*word* window would be
+  ~338 pieces and get silently truncated by the encoder.
+- **39 of 96 regions were under 32 tokens** — a recipe title, its yield line and
+  its method are separate regions, so embedding regions directly would scatter
+  one recipe across three near-empty vectors.
+
+Cuts are made on word boundaries in the original text, never by decoding pieces
+back (MiniLM is uncased — a round-trip would lowercase every citation).
+`page_ids` accumulates across page breaks.
+
+Verified on 8 real held-out pages: 93 regions -> 34 windows, all <=256 pieces,
+7 of them spanning a page break.
+
+Also installed the two declared-but-missing deps: `faiss-cpu 1.15.0` and
+`sentence-transformers 5.7.0` (used `--no-deps` so it couldn't downgrade the
+`transformers` the OCR stage runs on).
+
+Next: `index/embed.py::encode`. Want me to continue?
+
+
+────────────────────────────────────────────────────────────────────────────────
+[TURN 3] — commit before moving on
+────────────────────────────────────────────────────────────────────────────────
+
+Me:
+but before going further lets commit and push what you have done
+
+
+AI:
+[Checked git status and the diff, confirmed only the two intended files were
+touched, then committed and pushed.]
+
+Committed and pushed.
+
+**`dcc6f2d`** -> `origin/main` (fast-forward from `2db216c`, no divergence):
+
+- `src/doc_agent/index/chunk.py` — Stage 4a chunker
+- `tests/test_retrieval.py` — 17 tests replacing the placeholder
+
+Commit scope was clean (only those two files were modified), and the message
+carries no Claude co-author trailer.
+
+Next up when you're ready: `index/embed.py::encode`.
+
+[I ask for a commit at every stage boundary on purpose. Earlier in the project a
+large unreviewed batch of work made it hard to tell which change caused what, and
+one commit per stage keeps the history readable for the team.]
+
+
+────────────────────────────────────────────────────────────────────────────────
+[TURN 4] — embedding, and two findings I had to decide on
+────────────────────────────────────────────────────────────────────────────────
+
+Me:
+now proceed
+
+
+AI:
+[Implemented src/doc_agent/index/embed.py, added tests, ran ruff/black/mypy on
+the changed files, then verified end-to-end on real pages.]
+
+`index/embed.py` is done — 26 Stage 4 tests, 103 passed / 8 skipped overall,
+clean on ruff/black/mypy.
+
+**Design:** `encode_texts` is the single encoding path and `encode` is a thin
+wrapper over it, because MiniLM is a bi-encoder — Stage 5 must embed queries
+through the *same* function or the two towers quietly skew apart. Vectors are
+L2-normalised so an inner product *is* cosine, which is what makes
+`weak_threshold` a meaningful constant. `embed.dim` is verified against what the
+model actually returns, since a width mismatch doesn't raise until search time,
+by which point the index on disk is already wrong.
+
+Verified end-to-end on real pages: 8 pages -> 93 regions -> 34 windows ->
+(34, 384), correct page retrieved top for an electricity query. 300 texts embed
+in 0.19 s on CPU.
+
+**Two findings you should see before I go on:**
+
+1. **`retrieve.weak_threshold: 0.35` looks mis-calibrated.** Top cosine over
+   12 pages / 5 queries: `0.314, 0.479, 0.632, 0.552, 0.301`. Two of five
+   retrieved the *right* page but score below 0.35 — so `is_weak()` would
+   re-search and then abstain on correct evidence. Full 256-piece windows dilute
+   cosine a lot (the same model gives 0.653 on a one-sentence passage). This is a
+   Stage 5 decision — lower the constant against measured data, or gate on the
+   cross-encoder instead — so I've left it alone and recorded it.
+
+2. **1.0% of words end in a line-break hyphen** (90 of 9,010) — "to- gether",
+   "estab-". Each becomes two junk wordpieces. De-hyphenating in chunk.py is
+   cheap but ambiguous for genuine compounds at a line end ("Home-" / "Keeping").
+
+
+────────────────────────────────────────────────────────────────────────────────
+[TURN 5] — deferring one finding, taking the next stage
+────────────────────────────────────────────────────────────────────────────────
+
+Me:
+commit embed as-is and move to store.py
+
+[Both findings are real, but neither belongs to Stage 4b. The threshold is a
+Stage 5 constant and A3 owns calibration; de-hyphenation changes the text that
+goes into the index, so it would invalidate any measurement taken before it. I
+recorded both rather than half-fixing them.]
+
+
+AI:
+[Committed embed.py, then, before writing store.py, benchmarked the index
+backends the config offers — because the shipped default is faiss:hnsw.]
+
+Measured before writing: **`faiss` and `torch` cannot coexist in this process** —
+three copies of `libomp.dylib` (torch, sklearn, faiss), and any faiss call after
+loading the embedder dies with `OMP: Error #15` -> SIGSEGV. That would kill
+`build_knowledge_base()`, which embeds then indexes in one process.
+
+The only workaround that works is `OMP_NUM_THREADS=1`, which also single-threads
+torch. So I measured whether faiss is worth that:
+
+    backend        ms/query   recall@10   exact?
+    numpy matmul      0.004       1.000    yes
+    faiss:flat        0.009       1.000    yes
+    faiss:hnsw        0.012       1.000    no
+
+At 2,000 vectors numpy is 0.125 ms/query; at 20,000 (10x this book) still
+0.25 ms. faiss buys nothing at this scale and costs a crash.
+
+[...]
+
+`index/store.py` is done — 39 Stage 4 tests, **116 passed / 8 skipped** overall,
+clean on ruff/black/mypy.
+
+**Persists three files** to `data/index/` (now gitignored): `vectors.npy`,
+`chunks.jsonl` row-aligned with it (a search hit is an integer, and an integer
+cannot be cited), and `meta.json`. That third file is the one that earns its keep
+— `load` refuses an index whose `embed_model` disagrees with config, because
+nothing in a vector says which encoder made it, so a stale index would otherwise
+load, search, and return confidently wrong neighbours. Results are copies, so one
+query's scores never linger on the shared chunks.
+
+**Backend decision:** `index.type` now defaults to `numpy:flat` instead of the
+shipped `faiss:hnsw`, for the crash and the benchmark above. `faiss:flat` /
+`faiss:hnsw` still work — they're built at load time from the same `vectors.npy`,
+so the on-disk format doesn't depend on the backend, and switching is a config
+edit. This is a visible deviation from the template, same category as
+detectron2 -> xycut, so flag it if a grader expects literal FAISS.
+
+Verified end-to-end on 12 real pages:
+
+    Q: what is the recipe for soup?
+       0.632  hkb#c00030  ['hkb_p0220']  Make this in the same way as spinach...
+       0.611  hkb#c00029  ['hkb_p0220']  in the tureen. Cream of Tomato Soup...
+       0.594  hkb#c00032  ['hkb_p0220']  thick soup. Green Pea Puree...
+
+
+────────────────────────────────────────────────────────────────────────────────
+[TURN 6] — the build script, and a blocker in someone else's module
+────────────────────────────────────────────────────────────────────────────────
+
+Me:
+yes do
+
+
+AI:
+[Rewrote scripts/build_index.sh, then smoke-tested it on the 40 held-out pages
+rather than the full 624, to get a failure signal in minutes instead of half an
+hour.]
+
+`scripts/build_index.sh` is written, and smoke-testing it on 40 pages surfaced a
+blocker that needs your call.
+
+**The script** (rewritten, not just wrapped): the template ran `make ingest
+index`, but *both* targets call `build_knowledge_base()`, so the full 624-page
+OCR pass ran **twice** for one index. It now runs once, reads `raw_dir`/`out_dir`
+from config rather than restating them, preflights for pages + tesseract, and
+prints `meta.json` at the end so an empty index can't pass silently. It also
+exports `PYTHONPATH=src` — `doc_agent` isn't pip-installed in a plain checkout,
+so `python scripts/run_index.py` died on `ModuleNotFoundError` before it did
+anything else.
+
+I also set **`enhance.enabled: false`**: `Enhancer.apply()` is a stub, so `true`
+killed Stage 1 immediately. The generative enhancer is the bonus item.
+
+**The blocker.** The 40-page run gets through ingest -> layout -> OCR
+(486 chunks, 26,645 words) and then dies:
+
+    pipeline.py:19  hooks.run(hooks.AFTER_OCR, ...)
+    governance/pii.py:16 in _scrub
+    NotImplementedError: PII: redact text/answer/log in ctx
+
+`wiring.register_all()` attaches `pii._scrub` to `AFTER_OCR`, which the index
+build passes through. So **no knowledge base can be built until PII redaction
+exists**. Guardrails and grounding are wired too, but only at `ON_TOOL_CALL` /
+`BEFORE_ANSWER`, so they don't block indexing.
+
+
+────────────────────────────────────────────────────────────────────────────────
+[TURN 7] — unblocking with the smallest thing that works
+────────────────────────────────────────────────────────────────────────────────
+
+Me:
+> Implement detect/redact minimally now (~15 lines of regex for emails/phones/
+> addresses, plus the _scrub handler). It's marked "mandatory" in the module, and
+> on a 1918 cookbook it should be close to a no-op — I'd measure how many spans
+> it actually fires on.
+>
+> do it
+
+[I quoted the assistant's own proposal back at it, because I wanted exactly that
+scope and no more. PII is not my section, and a full NER pass would have been a
+project of its own; the requirement here was to stop the build from dying.]
+
+
+AI:
+[Wrote src/doc_agent/governance/pii.py, added tests to test_crosscutting.py
+including the template's own skipped PII test, then measured the detector against
+the book's entire text layer before believing anything about it.]
+
+PII is done and the pipeline runs clean end to end.
+
+**Measurement** (what I said I'd check before believing the docstring): over the
+book's full text layer — 625 pages, 317,844 words — `detect()` fires **11 times,
+all ADDRESS, all on the two 1918 advertising pages** ("36 Pearl Street",
+"606 Chicago Ave.", "318 West Washington St."). Zero email/phone/SSN. **Zero
+spans of any kind on the 40 held-out pages**, so the recipe corpus and every eval
+number are untouched. Recipe quantities, oven temperatures and "See page 214"
+don't trigger it. I corrected the docstring's claim to these numbers.
+
+Three design points, each forced by the surrounding code:
+
+- It redacts **in place**, because `pipeline.py` discards what `hooks.run`
+  returns and then chunks the same list it passed in — a handler returning tidy
+  copies would scrub nothing.
+- It walks arbitrary ctx shapes, because one handler sits on three seams that
+  pass different structures.
+- It deliberately does **not** detect personal names. This is a domestic manual
+  where "Mrs. Lincoln's recipe" is the content being retrieved.
+
+**First clean Stages 1-4 run** (40 held-out pages, 151 s): 40 pages -> 498
+regions -> 486 OCR chunks / 26,645 words -> 166 windows <=254 pieces -> 166x384
+index. `"how do I clean silver?"` returns p125's cleaning windows at
+0.479 / 0.462 / 0.453. Full suite passes; ruff/black/mypy clean on the changed
+files.
+
+Committed as `5365ea6` (build script + config) and `722ea20` (PII).
+
+
+────────────────────────────────────────────────────────────────────────────────
+[TURN 8] — pushing Stage 4
+────────────────────────────────────────────────────────────────────────────────
+
+Me:
+yes push
+
+
+AI:
+Pushed — `dcc6f2d..722ea20`, fast-forward, four commits (embed, store, build
+script, PII) now on `Worston/doc-agent-G03` main.
+
+All mandatory A2 *code* is done. What's left is artifacts:
+`notebooks/kb_demo.ipynb`, `reports/pipeline_diagram.md`,
+`configs/design_choices.md`, the form, transcripts, and the `a2-submit` tag.
+
+The notebook needs a real index to demo a retrieval against, so the ~30-minute
+full 624-page build is the natural next step.
+
+
+────────────────────────────────────────────────────────────────────────────────
+[TURN 9] — handover
+────────────────────────────────────────────────────────────────────────────────
+
+Me:
+now i will hand-over to my teammate to work further. My part is done. What steps
+are left for them?
+
+
+AI:
+Everything mandatory in **code** is done and pushed (`722ea20`); what's left is
+one build and six artifacts.
+
+Blocking step — build the real index (~30 min):
+
+    bash scripts/get_data.sh      # data/raw/ is gitignored - 624 PNGs re-render
+    brew install tesseract        # ocr.model is 'tesseract'; script preflights
+    bash scripts/build_index.sh   # ~30 min, OCR dominates at 2.8 s/page
+
+One env trap: `sentence-transformers` must be installed with `--no-deps`, or its
+`transformers<4.45` pin downgrades the 4.57.3 the OCR stage needs.
+
+Artifacts still owed: `notebooks/kb_demo.ipynb` (outputs committed),
+`reports/pipeline_diagram.md`, `configs/design_choices.md`, the filled A2 form,
+one transcript per member, and the `a2-submit` tag.
+
+Open decisions handed over:
+
+1. `retrieve.weak_threshold: 0.35` is mis-calibrated — 2 of 5 test queries
+   retrieved the *correct* page yet scored below it.
+2. 1.0% of words end in a line-break hyphen; de-hyphenation was deferred.
+3. `device: cuda` in config.yaml is wrong for this Mac.
+4. The form says submit a ZIP; SUBMISSION.md says a GitHub tag and "do NOT
+   upload a ZIP". Someone should ask the instructor.
+
+
+────────────────────────────────────────────────────────────────────────────────
+REFLECTION
+────────────────────────────────────────────────────────────────────────────────
+
+What I actually did in this section
+
+I owned Stage 4 — turning the OCR output into a searchable index — plus the build
+script that runs Stages 1-4 in one command, and the PII handler that turned out
+to be standing in the way of any index existing at all. Section 4 of the form
+describes what runs; this transcript is how it got decided.
+
+What I learned about directing an AI assistant
+
+The single most useful habit was refusing to accept a number without asking where
+it came from. Three of the decisions in Section 4 look arbitrary on the form and
+are not:
+
+- **256 wordpieces, not 256 words.** The config said "chunk_tokens: 256" and the
+  obvious reading is words. Measuring the corpus gave 1.32 wordpieces per word,
+  so that reading would have produced ~338-piece windows and MiniLM would have
+  silently truncated every one of them. Silently is the dangerous part — there is
+  no error, just missing text at the end of every chunk.
+- **numpy:flat, not the FAISS the template ships.** This started as a crash
+  (`OMP: Error #15`, three copies of libomp) and I could have stopped at "faiss
+  is broken on my Mac". The benchmark is what made it a defensible design choice
+  instead of an excuse: at ~2,000 vectors exact search is faster *and* exact,
+  and HNSW's approximation only pays off in the millions.
+- **Redacting in place.** The obvious implementation returns a cleaned copy, and
+  it would have scrubbed nothing, because the pipeline throws away the hook's
+  return value and keeps using the original list. That is only visible by reading
+  the caller.
+
+Where I had to overrule the assistant, and where I let it run
+
+I stopped the TrOCR retrain even though it was mid-flight, because the result
+could not have changed which backend ships. I deferred both findings it raised at
+the embedding stage — the mis-calibrated threshold and the hyphenation — because
+neither belonged to the stage being built, and fixing the hyphenation would have
+invalidated the measurements taken before it. I also held it to the smallest
+possible PII implementation rather than letting it build a general detector.
+
+Conversely, when it proposed measuring before writing — pricing the tokenizer
+before choosing a window size, benchmarking three index backends before picking
+one — I let it, and that is where the section's actual content came from.
+
+What I would do differently
+
+Two things. First, I would have caught the wordpiece/word distinction at design
+time rather than at implementation time; it was in the encoder's documentation
+the whole time. Second, I let the OCR fine-tuning run consume a large block of
+time before checking on it, and the loss-shift bug meant two of those runs were
+worthless. A cheap sanity check — decode 20 predictions and read them — would
+have exposed "the model skips every other word" in minutes instead of hours.
+
+Honest limits of what is claimed here
+
+The fine-tuned TrOCR number quoted elsewhere in the project predates the
+loss-shift fix and was never re-run, so it is an upper bound on that model's
+error, not its score. The index numbers here come from a 40-page smoke build and
+a 12-page verification, not the full 624-page corpus, which a teammate built
+afterwards; the shapes and thresholds are the same but the counts differ. And the
+`weak_threshold` in the config is, by my own measurement, wrong — it is recorded
+as an open issue for A3 rather than quietly patched to make this milestone look
+cleaner.
