@@ -1,22 +1,169 @@
 Name           : Khalid Hasan Tuhin
 Student Number : 2105002
-Sections Led   : Section 4 — The Knowledge Base We Built
-Stages Owned   : Stage 4 (chunk / embed / index) + the index build script
-                 and the PII seam that blocked it
-Dates          : 12 August 2026, 02:53 - 04:32 (Asia/Dhaka)
+Sections Led   : Section 3 — Components & Options We Considered
+                 Section 4 — The Knowledge Base We Built
+Stages Owned   : Stages 1-3 code (preprocess / layout / OCR) — the head-to-head
+                 comparisons behind Section 3 — and Stage 4 (chunk / embed /
+                 index) with the build script and the PII seam that blocked it
 Assistant      : Claude (Anthropic), used through the Claude Code CLI, which
                  reads and edits files in the repo and runs shell commands
                  directly. Actions it took between messages are summarised in
                  square brackets inside its replies.
-Note           : This is a condensed excerpt of the working session. My prompts
+Note           : This is a condensed excerpt of the working sessions. My prompts
                  are verbatim. The assistant's replies are shortened where they
                  repeated themselves or dumped full file contents; every cut is
                  marked [...]. Numbers, commit hashes and error text are
                  unedited.
 
+                 Turns 1-2 are the Section 3 comparisons (Stage 1 enhancement
+                 and Stage 2 layout); turn 3 is the Section 3 OCR comparison and
+                 also opens Stage 4; turns 4-11 build the knowledge base of
+                 Section 4. The chunking and index rows of Section 3 are decided
+                 in turns 4 and 7.
+
 
 ────────────────────────────────────────────────────────────────────────────────
-[TURN 1] — scoping what Stage 4 actually is
+[TURN 1] — enhancement options: classical filters vs binarisation vs generative
+────────────────────────────────────────────────────────────────────────────────
+
+Me:
+continue
+
+
+AI:
+[Implemented src/doc_agent/ingest/preprocess.py, then ran each candidate variant
+end-to-end over the 40 human-verified pages and scored Tesseract's output against
+labels.jsonl, rather than picking defaults by reputation.]
+
+Measurements settle the defaults: **binarize `none`** (0.0797 vs 0.0911 CER for
+Sauvola), **median denoise on** (0.0797 vs 0.0885), skew is tiny (median 0.12°,
+max 0.55°) so the search window can narrow.
+
+[...]
+
+**`e1d626d`** — Stage 1 preprocessing implemented, with every parameter chosen by
+measurement against your now-verified oracle rather than asserted:
+
+    variant                     CER
+    raw                       0.0914
+    deskew + median denoise   0.0797   <- default
+    deskew, no median         0.0885
+    + Sauvola                 0.0911
+    + Otsu                    0.0799
+
+So binarization ships implemented and selectable but **off by default** —
+Tesseract binarizes internally, and TrOCR wants continuous tone.
+
+Three things worth your attention:
+
+1. **Deskew earns nothing** (<0.0001 CER) — the Internet Archive scanner already
+   deskews. It's verified working (worst residual 2.55° -> 0.25° on an 80-page
+   sample) and kept as cheap insurance, but it is not what makes the numbers
+   move. Recorded honestly rather than claimed as a win.
+2. **The error is a layout problem, not a pixel problem.** Mixed-layout pages
+   score 0.163 vs 0.023 (two-column) and 0.027 (single-column). That's reading
+   order — no filter fixes it. This is now a measured argument for the layout
+   stage carrying speciality E2, which should go in the A2 form.
+3. **Blocker ahead:** `configs/config.yaml` specifies `layout.model:
+   detectron2:layout`, but neither `layoutparser` nor `detectron2` is installed,
+   and detectron2 has no Apple Silicon build.
+
+[This is the enhancement row of Section 3. The generative VAE/diffusion enhancer
+is the bonus item and stays disabled — but the row is not "we skipped it": four
+classical variants were measured against each other, and the winner beats raw
+scans by 0.0117 CER while binarisation actively loses.]
+
+
+────────────────────────────────────────────────────────────────────────────────
+[TURN 2] — layout options, and a substitution that needed my sign-off
+────────────────────────────────────────────────────────────────────────────────
+
+Me:
+okay i have pushed the code. Now go to the next stage.
+
+
+AI:
+[Tried a global column-profile split first, measured it against the verified
+pages, and found it fails on exactly the pages that matter.]
+
+The global column profile fails exactly on the worst mixed pages (gutter width 1,
+100% crossing rows) — full-width text fills the gutter, so a page-wide profile
+can't see it. That's the classic case for **recursive XY-cut**: alternate
+row/column cuts on the widest valley, so a mixed page cuts horizontally first,
+then finds the gutter inside the body band. It also yields reading order
+directly.
+
+[...]
+
+**Stage 2 complete — 41 passed, 11 skipped, 0 failures.**
+
+Measured on the 40 human-verified pages:
+
+                              full-page (psm 3)   XY-cut regions (psm 6)
+    overall CER                          0.0797                   0.0272
+    mixed-layout pages                   0.1628                   0.0259
+    layout classification         15/40 (A1 heuristic)              33/40
+
+**One decision needs your sign-off before I commit it.** `configs/config.yaml`
+shipped with:
+
+    layout: {model: "detectron2:layout", score_thr: 0.5}
+
+Neither `layoutparser` nor `detectron2` installs on Apple Silicon, so that line
+was never runnable on your machine. I replaced it with a classical recursive
+XY-cut. This changes the declared architecture from a learned detector to a
+classical one. If your course expects a neural layout model for speciality E2,
+tell me and I'll look at alternatives (e.g. a PubLayNet ONNX export, which does
+run here) instead.
+
+
+Me:
+but my instructor told me not to create any files. but you have created
+test_layout.py
+is it valid?
+
+
+AI:
+[Searched the handbook and STRUCTURE.md for the actual rule instead of
+guessing.]
+
+Yes, it's valid — and it's actually an assigned deliverable. Here's the evidence
+from your own repo:
+
+**`handbook/05-Codebase-Guide.md:380`** lists as an A3 item:
+> `[author]` **tests/test_*.py + test_crosscutting.py** — per-stage +
+> cross-cutting tests; plus the engineering hygiene everyone keeps green:
+> **E37** unit tests...
+
+The prohibition is on inventing new **source modules** or moving things —
+because `tests/test_structure.py` is a CI gate that asserts specific module paths
+exist. A new file under `tests/` breaks none of that.
+
+What I've actually created across all of A2: `tests/test_preprocess.py` and
+`tests/test_layout.py`. **Zero new files under `src/`.** `preprocess.py` and
+`layout.py` were both shipped stubs; I only wrote the function bodies.
+
+**Two honest caveats:**
+
+1. Per the handbook, tests are formally an **A3** deliverable, so writing them
+   during A2 is early. It's not a violation, but if your instructor is grading
+   A2 strictly against its file list, these are extra.
+2. If the rule really is literal "zero new files, no exceptions," then
+   `test_preprocess.py` is already pushed and affected too.
+
+
+Me:
+okay let it commit for now
+
+[Two decisions of mine in one turn. I accepted the detectron2 -> XY-cut
+substitution because the alternative was a dependency that does not exist on this
+hardware, and I accepted the test files after seeing the handbook line rather
+than on assurance alone. Both are recorded in Section 3 as deviations from the
+template, not hidden.]
+
+
+────────────────────────────────────────────────────────────────────────────────
+[TURN 3] — scoping what Stage 4 actually is
 ────────────────────────────────────────────────────────────────────────────────
 
 Me:
@@ -65,7 +212,7 @@ was the part still unbuilt. This set the scope of everything below.]
 
 
 ────────────────────────────────────────────────────────────────────────────────
-[TURN 2] — chunking: the measurement that decided the design
+[TURN 4] — chunking: the measurement that decided the design
 ────────────────────────────────────────────────────────────────────────────────
 
 Me:
@@ -112,7 +259,7 @@ Next: `index/embed.py::encode`. Want me to continue?
 
 
 ────────────────────────────────────────────────────────────────────────────────
-[TURN 3] — commit before moving on
+[TURN 5] — commit before moving on
 ────────────────────────────────────────────────────────────────────────────────
 
 Me:
@@ -141,7 +288,7 @@ one commit per stage keeps the history readable for the team.]
 
 
 ────────────────────────────────────────────────────────────────────────────────
-[TURN 4] — embedding, and two findings I had to decide on
+[TURN 6] — embedding, and two findings I had to decide on
 ────────────────────────────────────────────────────────────────────────────────
 
 Me:
@@ -183,7 +330,7 @@ in 0.19 s on CPU.
 
 
 ────────────────────────────────────────────────────────────────────────────────
-[TURN 5] — deferring one finding, taking the next stage
+[TURN 7] — deferring one finding, taking the next stage
 ────────────────────────────────────────────────────────────────────────────────
 
 Me:
@@ -244,7 +391,7 @@ Verified end-to-end on 12 real pages:
 
 
 ────────────────────────────────────────────────────────────────────────────────
-[TURN 6] — the build script, and a blocker in someone else's module
+[TURN 8] — the build script, and a blocker in someone else's module
 ────────────────────────────────────────────────────────────────────────────────
 
 Me:
@@ -285,7 +432,7 @@ exists**. Guardrails and grounding are wired too, but only at `ON_TOOL_CALL` /
 
 
 ────────────────────────────────────────────────────────────────────────────────
-[TURN 7] — unblocking with the smallest thing that works
+[TURN 9] — unblocking with the smallest thing that works
 ────────────────────────────────────────────────────────────────────────────────
 
 Me:
@@ -336,7 +483,7 @@ Committed as `5365ea6` (build script + config) and `722ea20` (PII).
 
 
 ────────────────────────────────────────────────────────────────────────────────
-[TURN 8] — pushing Stage 4
+[TURN 10] — pushing Stage 4
 ────────────────────────────────────────────────────────────────────────────────
 
 Me:
@@ -356,7 +503,7 @@ full 624-page build is the natural next step.
 
 
 ────────────────────────────────────────────────────────────────────────────────
-[TURN 9] — handover
+[TURN 11] — handover
 ────────────────────────────────────────────────────────────────────────────────
 
 Me:
@@ -395,12 +542,29 @@ Open decisions handed over:
 REFLECTION
 ────────────────────────────────────────────────────────────────────────────────
 
-What I actually did in this section
+What I actually did in these sections
 
-I owned Stage 4 — turning the OCR output into a searchable index — plus the build
-script that runs Stages 1-4 in one command, and the PII handler that turned out
-to be standing in the way of any index existing at all. Section 4 of the form
-describes what runs; this transcript is how it got decided.
+I owned two sections that are really one job seen twice. **Section 4** is what
+runs: the chunker, the embedder, the index, the build script that drives Stages
+1-4 in one command, and the PII handler that turned out to be standing in the way
+of any index existing at all. **Section 3** is what I rejected on the way there,
+and every row of it was decided by running the alternative rather than reading
+about it:
+
+    row            options I actually ran            chosen because
+    enhancement    raw / deskew+median / no median   0.0797 beats raw 0.0914;
+                   / Sauvola / Otsu                  both binarisers lose
+    layout         A1 centre-crossing / global       XY-cut 33/40 vs 15/40,
+                   column profile / XY-cut           CER 0.0797 -> 0.0272
+    OCR            Tesseract / TrOCR-base / TrOCR-   Tesseract 0.0272 vs 0.81+,
+                   small / fine-tuned TrOCR-small    and 45x faster
+    chunking       raw regions / word budget /       1.32 pieces per word makes
+                   wordpiece budget                  a word budget truncate
+    index          numpy exact / faiss flat /        recall 1.000 for all three;
+                   faiss HNSW                        numpy fastest at this size
+
+Turns 1-2 are the first two rows, turn 3 the third, turns 4 and 7 the last two.
+The table in the form is a summary of those runs, not a literature review.
 
 What I learned about directing an AI assistant
 
